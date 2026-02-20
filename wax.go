@@ -1,87 +1,53 @@
 package main
 
-// WaxRecommendation представляет одну рекомендацию мази
+import (
+	"context"
+	"fmt"
+)
+
+// WaxRecommendation структура мази (оставляем как есть)
 type WaxRecommendation struct {
-	Name        string   // Название мази
-	Style       string   // "classic", "skate", "both"
-	TempMin     int      // Минимальная температура (например, -5)
-	TempMax     int      // Максимальная температура (+5)
-	HumidityMin int      // Минимальная влажность (0-100)
-	HumidityMax int      // Максимальная влажность
-	SnowTypes   []string // Типы снега: "fresh", "old", "wet", "dry"
-	TrackTypes  []string // Типы трассы: "hard", "soft", "icy"
+	Name        string
+	Style       string
+	TempMin     int
+	TempMax     int
+	HumidityMin int
+	HumidityMax int
+	SnowTypes   []string
+	TrackTypes  []string
 }
 
-// База данных в памяти (пока заменим потом на PostgreSQL)
-var waxDB = []WaxRecommendation{
-	{
-		Name:        "SWIX V30 (синий)",
-		Style:       "both",
-		TempMin:     -3,
-		TempMax:     0,
-		HumidityMin: 50,
-		HumidityMax: 80,
-		SnowTypes:   []string{"old", "wet"},
-		TrackTypes:  []string{"hard", "icy"},
-	},
-	{
-		Name:        "SWIX V40 (фиолетовый)",
-		Style:       "classic",
-		TempMin:     -5,
-		TempMax:     -2,
-		HumidityMin: 60,
-		HumidityMax: 90,
-		SnowTypes:   []string{"fresh", "old"},
-		TrackTypes:  []string{"soft"},
-	},
-	{
-		Name:        "START OSLO (жёлтый)",
-		Style:       "skate",
-		TempMin:     -1,
-		TempMax:     3,
-		HumidityMin: 40,
-		HumidityMax: 70,
-		SnowTypes:   []string{"wet", "dry"},
-		TrackTypes:  []string{"hard"},
-	},
-	// Добавь свои варианты
-}
-
-// FilterWaxes подбирает мази по заданным критериям
-func FilterWaxes(temp, humidity int, snow, track string, style string) []WaxRecommendation {
-	var result []WaxRecommendation
-	for _, wax := range waxDB {
-		// Стиль
-		if style != "any" && wax.Style != style && wax.Style != "both" {
-			continue
-		}
-		// Температура
-		if temp < wax.TempMin || temp > wax.TempMax {
-			continue
-		}
-		// Влажность
-		if humidity < wax.HumidityMin || humidity > wax.HumidityMax {
-			continue
-		}
-		// Тип снега (проверяем, что снег есть в списке разрешённых)
-		if !contains(wax.SnowTypes, snow) {
-			continue
-		}
-		// Тип трассы
-		if !contains(wax.TrackTypes, track) {
-			continue
-		}
-		result = append(result, wax)
+// FilterWaxes выполняет поиск по базе данных
+func FilterWaxes(temp, humidity int, snow, track string, style string) ([]WaxRecommendation, error) {
+	if dbPool == nil {
+		return nil, fmt.Errorf("database not connected")
 	}
-	return result
-}
 
-// contains вспомогательная функция для поиска в срезе
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
+	// SQL-запрос с параметрами
+	query := `
+		SELECT name, style, temp_min, temp_max, humidity_min, humidity_max, snow_types, track_types
+		FROM waxes
+		WHERE $1 BETWEEN temp_min AND temp_max
+		  AND $2 BETWEEN humidity_min AND humidity_max
+		  AND ($3 = ANY(snow_types) OR $3 IS NULL)
+		  AND ($4 = ANY(track_types) OR $4 IS NULL)
+		  AND (style = $5 OR style = 'both')
+	`
+
+	rows, err := dbPool.Query(context.Background(), query, temp, humidity, snow, track, style)
+	if err != nil {
+		return nil, fmt.Errorf("database query error: %w", err)
 	}
-	return false
+	defer rows.Close()
+
+	var results []WaxRecommendation
+	for rows.Next() {
+		var w WaxRecommendation
+		err := rows.Scan(&w.Name, &w.Style, &w.TempMin, &w.TempMax, &w.HumidityMin, &w.HumidityMax, &w.SnowTypes, &w.TrackTypes)
+		if err != nil {
+			return nil, fmt.Errorf("row scan error: %w", err)
+		}
+		results = append(results, w)
+	}
+	return results, nil
 }

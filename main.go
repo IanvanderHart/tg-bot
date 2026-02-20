@@ -14,6 +14,14 @@ type UserState struct {
 	Style    string
 	Snow     string
 	Track    string
+        City     string
+        Temp     float64
+        Humidity int
+        WeatherDone bool
+
+
+
+
 }
 
 var userStates = make(map[int64]*UserState) // хранилище состояний
@@ -41,6 +49,8 @@ bot.Handle("/find", func(c tb.Context) error {
 // Обработка текстовых сообщений (кнопок)
 bot.Handle(tb.OnText, func(c tb.Context) error {
 	userID := c.Sender().ID
+        userStates[userID]=&UserState{Step: "city"}
+        return c.Send("Введи название города, для которого нужен подбор мази:")
 	state, exists := userStates[userID]
 	if !exists {
 		return nil // пользователь не в режиме подбора
@@ -101,14 +111,35 @@ bot.Handle(tb.OnText, func(c tb.Context) error {
 		case "✅ Да":
 			// Здесь будем вызывать FilterWaxes с параметрами из state
 			// Пока просто заглушка
-			delete(userStates, userID)
-			return c.Send("Ищу подходящие мази... (скоро заработает)")
-		case "❌ Заново":
-			delete(userStates, userID)
-			return c.Send("Подбор отменён. Начни заново с /find")
-		default:
-			return c.Send("Пожалуйста, подтверди или отмени.")
+
+results, err := FilterWaxes(
+			int(state.Temp),  // округляем до целых
+			state.Humidity,
+			state.Snow,
+			state.Track,
+			state.Style,
+		)
+			
+delete(userStates, userID)
+		if err != nil {
+			return c.Send("Ошибка при поиске мазей.")
 		}
+		if len(results) == 0 {
+			return c.Send("Нет подходящих мазей для таких условий.")
+		}
+		msg := "Подходящие мази:\n"
+		for _, r := range results {
+			msg += "- " + r.Name + "\n"
+		}
+		return c.Send(msg)
+	case "❌ Заново":
+		delete(userStates, userID)
+		return c.Send("Подбор отменён. Начни заново с /find")
+	default:
+		return c.Send("Пожалуйста, подтверди или отмени.")
+	}			
+
+
 	}
 	return nil
 })
@@ -142,8 +173,27 @@ bot.Handle(tb.OnText, func(c tb.Context) error {
 
 	// Обработчик любого текста (если не команда)
 	bot.Handle(tb.OnText, func(c tb.Context) error {
+
+
+// В обработчике tb.OnText добавляем новый case "city"
+case "city":
+	state.City = text
+	state.Step = "weather"
+	// Сразу запрашиваем погоду
+	temp, humidity, err := GetWeather(state.City)
+	if err != nil {
+		log.Printf("Weather error for %s: %v", state.City, err)
+		return c.Send("Не удалось получить погоду для этого города. Проверь название или попробуй позже.")
+	}
+state.Temp=temp
+state.Humidity=humidity
+	state.WeatherDone = true
+	msg := fmt.Sprintf("Погода в %s: %.1f°C, влажность %d%%.\nТеперь выбери стиль катания:", state.City, temp, humidity)
+	state.Step = "style"
+	return c.Send(msg, styleKeyboard())
+
 		// Просто игнорируем, чтобы бот не отвечал на каждый чих
-		return nil
+		//return nil
 	})
 
 
